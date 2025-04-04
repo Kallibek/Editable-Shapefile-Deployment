@@ -1,0 +1,7 @@
+.venv/
+data/
+secrets/
+*.terraform*
+*.tfstate*
+*.txt
+*.ps1

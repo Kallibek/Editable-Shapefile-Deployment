@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Water Pipes Map</title>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <style>
+        body {
+            display: flex;
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        /* Sidebar styles: fixed height equal to the map (100vh) and its own scroll */
+        #sidebar {
+            width: 300px;
+            height: 100vh;
+            padding: 10px;
+            background: #f7f7f7;
+            border-right: 1px solid #ccc;
+            overflow-y: auto;
+        }
+        #sidebar h2 {
+            margin-top: 0;
+        }
+        #missingList {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+        #missingList li {
+            padding: 6px;
+            margin: 4px 0;
+            background: #fff;
+            border: 1px solid #ddd;
+            cursor: pointer;
+        }
+        #missingList li:hover {
+            background: #eaeaea;
+        }
+        /* Map container fills the remaining width */
+        #map {
+            height: 100vh;
+            flex: 1;
+        }
+        /* Legend styles for Leaflet control */
+        .legend {
+            background: white;
+            padding: 10px;
+            line-height: 18px;
+            color: #555;
+            box-shadow: 0 0 15px rgba(0,0,0,0.2);
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        .legend h4 {
+            margin: 0 0 5px;
+            font-size: 16px;
+            text-align: center;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 4px;
+        }
+        .legend-item i {
+            width: 20px;
+            height: 20px;
+            margin-right: 8px;
+            opacity: 0.7;
+        }
+        .legend-note {
+            font-style: italic;
+            margin-top: 5px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="sidebar">
+        <h2>Missing Install Dates</h2>
+        <ul id="missingList">
+            <!-- List items will be added here dynamically -->
+        </ul>
+        <p><a href="/download">Download Updated Shapefile</a></p>
+    </div>
+    <div id="map"></div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script>
+        // Initialize the map (initial view will be updated with fitBounds)
+        var map = L.map('map').setView([0, 0], 2);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+        }).addTo(map);
+
+        // Add legend as a Leaflet control positioned on the top right.
+        var legend = L.control({position: 'topright'});
+        legend.onAdd = function(map) {
+            var div = L.DomUtil.create('div', 'legend');
+            div.innerHTML = '<h4>Pipe Types</h4>' +
+                '<div class="legend-item"><i style="background: blue"></i> CI</div>' +
+                '<div class="legend-item"><i style="background: red"></i> STL</div>' +
+                '<div class="legend-item"><i style="background: green"></i> DI</div>' +
+                '<div class="legend-item"><i style="background: purple"></i> HDPE</div>' +
+                '<div class="legend-item"><i style="background: orange"></i> AC</div>' +
+                '<div class="legend-note">Dashed (50% transparent): No Installation Date</div>';
+            return div;
+        };
+        legend.addTo(map);
+
+        // Global objects to store feature layers and selected feature.
+        var featureLayers = {};
+        var selectedLayer = null;
+
+        // Style function: assign colors based on the "Type" property and line style based on installation date.
+        function styleFeature(feature) {
+            var type = feature.properties.Type;
+            var color = "gray"; // default color
+            // Correct type value: if "HDPI", treat as "HDPE"
+            if (type === "HDPI") {
+                type = "HDPE";
+            }
+            switch (type) {
+                case "CI":
+                    color = "blue";
+                    break;
+                case "STL":
+                    color = "red";
+                    break;
+                case "DI":
+                    color = "green";
+                    break;
+                case "HDPE":
+                    color = "purple";
+                    break;
+                case "AC":
+                    color = "orange";
+                    break;
+            }
+            // If installation date is missing, use a dashed line with 50% opacity.
+            var dashed = (!feature.properties.Inst_Year || feature.properties.Inst_Year === "");
+            return {
+                color: color,
+                weight: 3,
+                dashArray: dashed ? "5, 5" : null,
+                opacity: dashed ? 0.5 : 1.0
+            };
+        }
+
+        // Function to highlight a selected layer.
+        function highlightLayer(layer) {
+            // Reset previously selected layer, if any.
+            if (selectedLayer && selectedLayer !== layer) {
+                selectedLayer.setStyle(styleFeature(selectedLayer.feature));
+            }
+            selectedLayer = layer;
+            layer.setStyle({
+                weight: 6,
+                color: "#FFD700",  // Gold highlight
+                dashArray: null,
+                opacity: 1.0
+            });
+            if (!L.Browser.ie && !L.Browser.opera && !L.Browser.edge) {
+                layer.bringToFront();
+            }
+        }
+
+        // Function to build popup content.
+        function buildPopupContent(feature) {
+            var assetID = feature.properties.Asset_ID || "N/A";
+            var type = feature.properties.Type || "N/A";
+            if (type === "HDPI") { type = "HDPE"; }
+            var size = feature.properties.Size ? Math.round(feature.properties.Size) : "N/A";
+            var currentDate = feature.properties.Inst_Year || '';
+            var content = '<div>' +
+                '<p><strong>Asset ID:</strong> ' + assetID + '</p>' +
+                '<p><strong>Type:</strong> ' + type + '</p>' +
+                '<p><strong>Size:</strong> ' + size + '</p>' +
+                '<hr>' +
+                '<form id="editForm">' +
+                '<label for="Inst_Year">Install Date:</label>' +
+                // Use a text input with a pattern for "YYYY" or "YYYY-MM" or "YYYY-MM-DD"
+                '<input type="text" id="Inst_Year" name="Inst_Year" value="' + currentDate + '" placeholder="YYYY or YYYY-MM or YYYY-MM-DD" pattern="^\\d{4}(?:-\\d{2})?(?:-\\d{2})?$" title="Enter a valid date in format YYYY, YYYY-MM or YYYY-MM-DD"/>' +
+                '<input type="hidden" id="feature_id" name="feature_id" value="' + assetID + '"/>' +
+                '<button type="submit">Save</button>' +
+                '</form>' +
+                '</div>';
+            return content;
+}
+
+        // Function to load GeoJSON data and populate map and sidebar list.
+        function loadGeoJSON() {
+            fetch('/data')
+            .then(response => response.json())
+            .then(data => {
+                var geojsonLayer = L.geoJson(data, {
+                    style: styleFeature,
+                    onEachFeature: function (feature, layer) {
+                        // Save the layer reference by Asset_ID.
+                        var assetID = feature.properties.Asset_ID;
+                        featureLayers[assetID] = layer;
+
+                        // Add click listener to open popup and highlight feature.
+                        layer.on('click', function () {
+                            highlightLayer(layer);
+                            layer.bindPopup(buildPopupContent(feature)).openPopup();
+
+                            // Attach event listener for the form.
+                            setTimeout(function() {
+                                var form = document.getElementById('editForm');
+                                if (form) {
+                                    form.addEventListener('submit', function(e) {
+                                        e.preventDefault();
+                                        var newDate = document.getElementById('Inst_Year').value;
+                                        var featureId = document.getElementById('feature_id').value;
+                                        fetch('/update', {
+                                            method: 'POST',
+                                            headers: {
+                                                'Content-Type': 'application/json'
+                                            },
+                                            body: JSON.stringify({
+                                                id: featureId,
+                                                Inst_Year: newDate
+                                            })
+                                        })
+                                        .then(response => response.json())
+                                        .then(result => {
+                                            if (result.status === 'success') {
+                                                feature.properties.Inst_Year = newDate;
+                                                alert('Update successful.');
+                                                layer.closePopup();
+                                                layer.setStyle(styleFeature(feature));
+                                                updateMissingList();
+                                            } else {
+                                                alert('Update failed: ' + result.message);
+                                            }
+                                        });
+                                    });
+                                }
+                            }, 100);
+                        });
+                    }
+                }).addTo(map);
+
+                // Fit map bounds to the geojson layer.
+                map.fitBounds(geojsonLayer.getBounds());
+
+                // After the layer is added, update the sidebar list.
+                updateMissingList();
+            });
+        }
+
+        // Function to update the sidebar list of features with missing installation date.
+        function updateMissingList() {
+            var missingList = document.getElementById('missingList');
+            missingList.innerHTML = ""; // Clear previous list items.
+            for (var assetID in featureLayers) {
+                var layer = featureLayers[assetID];
+                // Check if the feature's Inst_Year property is missing or empty.
+                if (!layer.feature.properties.Inst_Year || layer.feature.properties.Inst_Year === "") {
+                    // Create list item.
+                    var li = document.createElement('li');
+                    li.textContent = "Asset ID: " + assetID;
+                    // When clicked, pan and open the popup for that feature.
+                    li.addEventListener('click', function() {
+                        var selectedID = this.textContent.split(": ")[1];
+                        var selectedLayer = featureLayers[selectedID];
+                        if (selectedLayer) {
+                            map.fitBounds(selectedLayer.getBounds());
+                            selectedLayer.fire('click');
+                        }
+                    });
+                    missingList.appendChild(li);
+                }
+            }
+        }
+
+        // Load the GeoJSON data on page load.
+        loadGeoJSON();
+    </script>
+</body>
+</html>
