@@ -101,12 +101,16 @@ resource "aws_eip" "flask_app_eip" {
 #########################
 
 resource "null_resource" "initial_setup" {
-  depends_on = [aws_instance.flask_app_instance, aws_efs_mount_target.efs_mt]
+  depends_on = [
+    aws_instance.flask_app_instance, 
+    aws_efs_mount_target.efs_mt,
+    aws_eip.flask_app_eip
+    ]
 
   connection {
     type        = "ssh"
     user        = "ec2-user"
-    host        = aws_instance.flask_app_instance.public_ip
+    host        = aws_eip.flask_app_eip.public_ip
     private_key = file("../secrets/terraform.pem")
   }
 
@@ -153,12 +157,13 @@ resource "null_resource" "deploy_files" {
   triggers = {
     app_py_hash     = filesha256("../app.py")
     index_html_hash = filesha256("../templates/index.html")
+    shapefile_hash = filesha256("../data/tempMainPipes.shp")
   }
 
   connection {
     type        = "ssh"
     user        = "ec2-user"
-    host        = aws_instance.flask_app_instance.public_ip
+    host        = aws_eip.flask_app_eip.public_ip
     private_key = file("../secrets/terraform.pem")
   }
 
@@ -197,7 +202,12 @@ resource "null_resource" "deploy_files" {
 # Output Public URL
 #########################
 
-output "flask_app_url" {
+output "flask_app_elastic_url" {
   value       = "http://${aws_eip.flask_app_eip.public_ip}:5000"
-  description = "The public URL to access the Flask app"
+  description = "The public elastic URL to access the Flask app"
+}
+
+output "flask_app_static_url" {
+  value       = "http://${aws_instance.flask_app_instance.public_ip}:5000"
+  description = "The public static to access the Flask app"
 }
